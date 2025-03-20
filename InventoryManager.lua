@@ -1,69 +1,35 @@
---!strict
+local EnchantmentSystem = require(script.Parent.EnchantmentSystem)
 
 local InventoryManager = {}
 
--- List of all enchants that can be applied and their max level
-
-InventoryManager.DefaultItems = {} :: {[string]: InventoryItem}
-
-InventoryManager.Enchants = {
-	["Sharpness"] = {
-		MaxLevel = 5,
-		Types = {"Sword"}
-	},
-	["Protection"] = {
-		MaxLevel = 5,
-		Types = {"Armor"}
-	}
-} :: {[string]: {MaxLevel: number, Types: {string}}}
-
+-- Store rarity definitions
 InventoryManager.Rarities = {
 	"Common",
 	"Uncommon",
 	"Rare",
 	"Epic",
-	"Legendary",
+	"Legendary"
 }
 
--- Base type for items
-
-export type InventoryItem = {
-	DisplayName: string,
-	Id: string,
-	Image: string,
-	Rarity: string,
-	Type: string
+-- Define inventory object structure
+InventoryManager.DefaultInventory = {
+	Items = {},
+	MaxItems = 20,
+	Owner = ""
 }
 
-export type Inventory = {
-	Items: {InventoryItem},
-	MaxItems: number
-}
+-- Function to create a new inventory
+function InventoryManager.CreateInventory(maxItems: number, owner: string?)
+	local inventory = table.clone(InventoryManager.DefaultInventory)
+	inventory.Items = {}
+	inventory.MaxItems = maxItems or 20
+	inventory.Owner = owner or ""
 
-function InventoryManager.CreateInventory(maxItems: number, itemNames: {string}?, items: {InventoryItem}?)
-	local inventory = {} :: Inventory
-	inventory.MaxItems = maxItems
-	local itemsFromNames = {}
-
-	if itemNames then
-		for _, name in pairs(itemNames) do
-			local item = InventoryManager.DefaultItems[name]
-			if item then
-				-- Clone the item to avoid shared references
-				local clonedItem = InventoryManager.CloneItem(item)
-				table.insert(itemsFromNames, clonedItem)
-			else
-				warn("Item not found: " .. name)
-			end
-		end
-	end
-
-	inventory.Items = items or itemsFromNames
 	return inventory
 end
 
--- Helper function to clone an item - properly handles tables with string keys
-function InventoryManager.CloneItem(item: any): any
+-- Helper function to clone an item with all components
+function InventoryManager.CloneItem(item)
 	if type(item) ~= "table" then
 		return item
 	end
@@ -76,62 +42,181 @@ function InventoryManager.CloneItem(item: any): any
 			clone[key] = value
 		end
 	end
+
 	return clone
 end
 
-function InventoryManager.AddItemToInventory(inventory: Inventory, itemName: string?, item: InventoryItem?): (boolean, string?)
-	local itemToPut
-
-	if itemName then
-		itemToPut = InventoryManager.DefaultItems[itemName]
-		if not itemToPut then
-			return false, "Item with name '" .. itemName .. "' not found"
-		end
-		-- Clone the item
-		itemToPut = InventoryManager.CloneItem(itemToPut)
-	elseif item then
-		itemToPut = InventoryManager.CloneItem(item)
-	else
-		return false, "You have to pass either itemName or item"
-	end
-
-	if #inventory.Items < inventory.MaxItems then
-		table.insert(inventory.Items, itemToPut)
-		return true
-	else
+-- Function to add an item to inventory
+function InventoryManager.AddItem(inventory, item)
+	if #inventory.Items >= inventory.MaxItems then
 		return false, "Inventory is full"
 	end
+
+	-- Clone the item to avoid reference issues
+	local itemClone = InventoryManager.CloneItem(item)
+
+	-- Add to inventory
+	table.insert(inventory.Items, itemClone)
+	return true
 end
 
--- Add function to remove items from inventory
-function InventoryManager.RemoveItemFromInventory(inventory: Inventory, index: number): (boolean, string?)
+-- Function to remove an item from inventory
+function InventoryManager.RemoveItem(inventory, index)
 	if index < 1 or index > #inventory.Items then
-		return false, "Invalid index"
+		return false, "Invalid inventory index"
 	end
 
 	table.remove(inventory.Items, index)
 	return true
 end
 
--- Add function to search for items in inventory
-function InventoryManager.FindItemsInInventory(inventory: Inventory, criteria: {[string]: any}): {InventoryItem}
+-- Function to find items in inventory based on criteria
+function InventoryManager.FindItems(inventory, criteria)
 	local results = {}
 
-	for _, item in ipairs(inventory.Items) do
-		local match = true
+	for i, item in ipairs(inventory.Items) do
+		local matches = true
+
 		for key, value in pairs(criteria) do
-			if item[key] ~= value then
-				match = false
+			-- Handle nested component properties
+			if type(value) == "table" then
+				for componentName, componentProps in pairs(value) do
+					if type(componentProps) == "table" and item[componentName] then
+						for propName, propValue in pairs(componentProps) do
+							if item[componentName][propName] ~= propValue then
+								matches = false
+								break
+							end
+						end
+					else
+						matches = false
+					end
+
+					if not matches then
+						break
+					end
+				end
+				-- Handle direct properties
+			elseif item[key] ~= value then
+				matches = false
 				break
 			end
 		end
 
-		if match then
-			table.insert(results, item)
+		if matches then
+			table.insert(results, {Index = i, Item = item})
 		end
 	end
 
 	return results
 end
+
+-- Function to sort inventory items by criteria
+function InventoryManager.SortItems(inventory, sortBy, ascending)
+	ascending = ascending ~= false -- Default to ascending if not specified
+
+	table.sort(inventory.Items, function(a, b)
+		local valueA, valueB
+
+		-- Handle component property sorting
+		if type(sortBy) == "table" and #sortBy == 2 then
+			local componentName, propertyName = sortBy[1], sortBy[2]
+
+			if a[componentName] and b[componentName] then
+				valueA = a[componentName][propertyName]
+				valueB = b[componentName][propertyName]
+			else
+				return false
+			end
+			-- Handle direct property sorting
+		else
+			valueA = a[sortBy]
+			valueB = b[sortBy]
+		end
+
+		-- Handle nil values
+		if valueA == nil and valueB == nil then
+			return false
+		elseif valueA == nil then
+			return not ascending
+		elseif valueB == nil then
+			return ascending
+		end
+
+		-- Compare based on sort direction
+		if ascending then
+			return valueA < valueB
+		else
+			return valueA > valueB
+		end
+	end)
+
+	return true
+end
+
+-- Function to transfer items between inventories
+function InventoryManager.TransferItem(fromInventory, toInventory, itemIndex)
+	if itemIndex < 1 or itemIndex > #fromInventory.Items then
+		return false, "Invalid source inventory index"
+	end
+
+	if #toInventory.Items >= toInventory.MaxItems then
+		return false, "Destination inventory is full"
+	end
+
+	local item = fromInventory.Items[itemIndex]
+	local success = InventoryManager.AddItem(toInventory, item)
+
+	if success then
+		InventoryManager.RemoveItem(fromInventory, itemIndex)
+		return true
+	else
+		return false, "Failed to add item to destination inventory"
+	end
+end
+
+-- Generate a table of default items with rarities
+InventoryManager.DefaultItems = {}
+
+-- Function to register a default item template
+function InventoryManager.RegisterDefaultItem(itemId, itemType, properties, rarity)
+	-- Create the item using EnchantmentSystem
+	local item = EnchantmentSystem.CreateItem(itemType, properties)
+
+	-- Add metadata
+	item.Id = itemId
+	item.Rarity = rarity or "Common"
+
+	-- Store in default items
+	InventoryManager.DefaultItems[itemId] = item
+
+	return item
+end
+
+-- Example default items
+InventoryManager.RegisterDefaultItem("basic_sword", "Sword", {
+	DisplayName = "Basic Sword"
+}, "Common")
+
+InventoryManager.RegisterDefaultItem("hunters_bow", "Bow", {
+	DisplayName = "Hunter's Bow",
+	Components = {
+		Ranged = {
+			Range = 60
+		}
+	}
+}, "Uncommon")
+
+InventoryManager.RegisterDefaultItem("enchanted_armor", "Armor", {
+	DisplayName = "Enchanted Armor",
+	Components = {
+		Defensive = {
+			Defense = 8
+		},
+		Enchantable = {
+			MaxEnchantments = 5
+		}
+	}
+}, "Rare")
 
 return InventoryManager
