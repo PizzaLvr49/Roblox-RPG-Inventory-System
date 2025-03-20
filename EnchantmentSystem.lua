@@ -1,15 +1,79 @@
 --!strict
 local EnchantmentSystem = {}
 
--- Store all registered enchantments
-EnchantmentSystem.Enchantments = {}
+-- Component registry
+EnchantmentSystem.Components = {}
 
--- Store all registered item types
+-- Item type registry
 EnchantmentSystem.ItemTypes = {}
 
--- Function to register a new item type
-function EnchantmentSystem.RegisterItemType(typeName: string, defaultProperties: {[string]: any})
-	EnchantmentSystem.ItemTypes[typeName] = defaultProperties
+-- Enchantment registry
+EnchantmentSystem.Enchantments = {}
+
+-- Register a component type with its default properties
+function EnchantmentSystem.RegisterComponent(componentName: string, defaultProperties: {[string]: any})
+	EnchantmentSystem.Components[componentName] = defaultProperties
+	print("Registered component: " .. componentName)
+end
+
+-- Register default components
+EnchantmentSystem.RegisterComponent("Breakable", {
+	Durability = 100,
+	MaxDurability = 100,
+	CanBreak = true
+})
+
+EnchantmentSystem.RegisterComponent("Enchantable", {
+	Enchantments = {},
+	MaxEnchantments = 3
+})
+
+EnchantmentSystem.RegisterComponent("Weapon", {
+	Damage = 10,
+	AttackSpeed = 1.0
+})
+
+EnchantmentSystem.RegisterComponent("Ranged", {
+	Range = 50,
+	ProjectileSpeed = 20
+})
+
+EnchantmentSystem.RegisterComponent("Magical", {
+	MagicDamage = 8,
+	ManaCost = 10,
+	CooldownTime = 1.0
+})
+
+EnchantmentSystem.RegisterComponent("Defensive", {
+	Defense = 5,
+	Weight = 10
+})
+
+-- Function to create a component
+function EnchantmentSystem.CreateComponent(componentName: string, properties: {[string]: any})
+	if not EnchantmentSystem.Components[componentName] then
+		error("Unknown component: " .. componentName)
+	end
+
+	-- Create a new component based on default properties
+	local component = table.clone(EnchantmentSystem.Components[componentName])
+
+	-- Apply custom properties
+	for key, value in pairs(properties or {}) do
+		component[key] = value
+	end
+
+	return component
+end
+
+-- Function to register a new item type with its components
+function EnchantmentSystem.RegisterItemType(typeName: string, components: {string}, defaultProperties: {[string]: any})
+	local typeDefinition = {
+		Components = components,
+		DefaultProperties = defaultProperties or {}
+	}
+
+	EnchantmentSystem.ItemTypes[typeName] = typeDefinition
 	print("Registered item type: " .. typeName)
 end
 
@@ -19,29 +83,38 @@ function EnchantmentSystem.CreateItem(typeName: string, properties: {[string]: a
 		error("Unknown item type: " .. typeName)
 	end
 
-	-- Start with default properties for this type
-	local newItem = table.clone(EnchantmentSystem.ItemTypes[typeName])
+	local typeDefinition = EnchantmentSystem.ItemTypes[typeName]
+	local item = {
+		Type = typeName,
+		DisplayName = properties.DisplayName or typeName
+	}
+
+	-- Add base properties
+	for key, value in pairs(typeDefinition.DefaultProperties) do
+		item[key] = value
+	end
 
 	-- Apply custom properties
-	for key, value in pairs(properties) do
-		newItem[key] = value
+	for key, value in pairs(properties or {}) do
+		if key ~= "Components" then -- Avoid overriding components
+			item[key] = value
+		end
 	end
 
-	-- Ensure type is set
-	newItem.Type = typeName
-
-	-- Initialize enchantments if enchantable
-	if newItem.Enchantable then
-		newItem.Enchantments = {}
+	-- Create and attach components
+	for _, componentName in ipairs(typeDefinition.Components) do
+		local componentProperties = (properties and properties.Components and properties.Components[componentName]) or {}
+		item[string.lower(componentName)] = EnchantmentSystem.CreateComponent(componentName, componentProperties)
 	end
 
-	return newItem
+	return item
 end
 
 -- Function to register a new enchantment
 function EnchantmentSystem.RegisterEnchantment(name: string, config: {
 	MaxLevel: number,
 	ValidTypes: {string},
+	RequiredComponents: {string},
 	Effects: {[string]: any}
 	})
 	EnchantmentSystem.Enchantments[name] = config
@@ -57,8 +130,8 @@ function EnchantmentSystem.CanEnchantItemWith(item: any, enchantName: string): b
 		return false
 	end
 
-	-- Check if item is enchantable
-	if not item.Enchantable then
+	-- Check if item has enchantable component
+	if not item.enchantable then
 		return false
 	end
 
@@ -71,7 +144,19 @@ function EnchantmentSystem.CanEnchantItemWith(item: any, enchantName: string): b
 		end
 	end
 
-	return validType
+	if not validType then
+		return false
+	end
+
+	-- Check if item has all required components
+	for _, componentName in ipairs(enchantData.RequiredComponents or {}) do
+		local lowerComponentName = string.lower(componentName)
+		if not item[lowerComponentName] then
+			return false
+		end
+	end
+
+	return true
 end
 
 -- Function to enchant an item
@@ -89,8 +174,19 @@ function EnchantmentSystem.EnchantItem(item: any, enchantName: string, level: nu
 		return false
 	end
 
+	-- Check max enchantments limit
+	local currentCount = 0
+	for _ in pairs(item.enchantable.Enchantments) do
+		currentCount = currentCount + 1
+	end
+
+	if currentCount >= item.enchantable.MaxEnchantments and not item.enchantable.Enchantments[enchantName] then
+		warn("Item has reached maximum number of enchantments: " .. item.enchantable.MaxEnchantments)
+		return false
+	end
+
 	-- Add the enchantment
-	item.Enchantments[enchantName] = level
+	item.enchantable.Enchantments[enchantName] = level
 
 	-- Apply enchantment effects
 	EnchantmentSystem.ApplyEnchantmentEffects(item)
@@ -101,12 +197,12 @@ end
 
 -- Function to remove an enchantment
 function EnchantmentSystem.RemoveEnchantment(item: any, enchantName: string): boolean
-	if not item.Enchantments or not item.Enchantments[enchantName] then
+	if not item.enchantable or not item.enchantable.Enchantments[enchantName] then
 		return false
 	end
 
 	-- Remove the enchantment
-	item.Enchantments[enchantName] = nil
+	item.enchantable.Enchantments[enchantName] = nil
 
 	-- Recalculate all effects
 	EnchantmentSystem.ApplyEnchantmentEffects(item)
@@ -117,20 +213,40 @@ end
 
 -- Function to apply all enchantment effects to an item
 function EnchantmentSystem.ApplyEnchantmentEffects(item: any)
-	-- Reset calculated stats to base values
-	if item.BaseStats then
-		for stat, baseValue in pairs(item.BaseStats) do
-			item[stat] = baseValue
+	-- Reset all components to their base values
+	local typeDefinition = EnchantmentSystem.ItemTypes[item.Type]
+
+	for _, componentName in ipairs(typeDefinition.Components) do
+		local lowerComponentName = string.lower(componentName)
+		local component = item[lowerComponentName]
+		local baseComponent = EnchantmentSystem.Components[componentName]
+
+		-- Keep track of base values for stats
+		if not component.BaseValues then
+			component.BaseValues = {}
+			for key, value in pairs(component) do
+				if type(value) == "number" then
+					component.BaseValues[key] = value
+				end
+			end
+		end
+
+		-- Reset to base values
+		for key, baseValue in pairs(component.BaseValues) do
+			component[key] = baseValue
 		end
 	end
 
 	-- If no enchantments, just return
-	if not item.Enchantments then
+	if not item.enchantable or not item.enchantable.Enchantments then
 		return
 	end
 
+	-- Clear custom effects
+	item.customEffects = {}
+
 	-- For each enchantment on the item
-	for enchantName, level in pairs(item.Enchantments) do
+	for enchantName, level in pairs(item.enchantable.Enchantments) do
 		local enchantData = EnchantmentSystem.Enchantments[enchantName]
 
 		-- Skip if enchantment data doesn't exist
@@ -138,32 +254,38 @@ function EnchantmentSystem.ApplyEnchantmentEffects(item: any)
 			continue
 		end
 
-		-- Apply effects
-		for statName, effect in pairs(enchantData.Effects) do
-			-- Skip if this stat doesn't exist on the item
-			if item[statName] == nil then
-				continue
-			end
-
-			-- Apply multiplier if it exists for this level
-			if effect.Multiplier and effect.Multiplier[level] then
-				item[statName] = item[statName] * effect.Multiplier[level]
-			end
-
-			-- Apply additive modifier if it exists for this level
-			if effect.Modifier and effect.Modifier[level] then
-				item[statName] = item[statName] + effect.Modifier[level]
-			end
-		end
-
-		-- Apply custom effects
-		if enchantData.Effects.Custom then
-			for customEffect, value in pairs(enchantData.Effects.Custom) do
-				if value[level] then
-					if not item.CustomEffects then
-						item.CustomEffects = {}
+		-- Apply effects to each component
+		for componentName, effects in pairs(enchantData.Effects) do
+			if componentName == "Custom" then
+				-- Handle custom effects
+				for effectName, valueLevels in pairs(effects) do
+					if valueLevels[level] ~= nil then
+						item.customEffects = item.customEffects or {}
+						item.customEffects[effectName] = valueLevels[level]
 					end
-					item.CustomEffects[customEffect] = value[level]
+				end
+			else
+				-- Handle component effects
+				local lowerComponentName = string.lower(componentName)
+				local component = item[lowerComponentName]
+
+				if component then
+					for statName, effect in pairs(effects) do
+						-- Skip if this stat doesn't exist on the component
+						if component[statName] == nil then
+							continue
+						end
+
+						-- Apply multiplier if it exists for this level
+						if effect.Multiplier and effect.Multiplier[level] then
+							component[statName] = component[statName] * effect.Multiplier[level]
+						end
+
+						-- Apply additive modifier if it exists for this level
+						if effect.Modifier and effect.Modifier[level] then
+							component[statName] = component[statName] + effect.Modifier[level]
+						end
+					end
 				end
 			end
 		end
@@ -174,16 +296,13 @@ end
 function EnchantmentSystem.GetPossibleEnchantments(item: any): {[string]: number}
 	local result = {}
 
-	if not item.Enchantable then
+	if not item.enchantable then
 		return result
 	end
 
 	for enchantName, enchantData in pairs(EnchantmentSystem.Enchantments) do
-		for _, itemType in ipairs(enchantData.ValidTypes) do
-			if item.Type == itemType then
-				result[enchantName] = enchantData.MaxLevel
-				break
-			end
+		if EnchantmentSystem.CanEnchantItemWith(item, enchantName) then
+			result[enchantName] = enchantData.MaxLevel
 		end
 	end
 
@@ -192,68 +311,47 @@ end
 
 -- Register default item types
 EnchantmentSystem.RegisterItemType("Sword", {
-	DisplayName = "Sword",
-	Type = "Sword",
-	Damage = 10,
-	AttackSpeed = 1.0,
-	Durability = 100,
-	Enchantable = true,
-	BaseStats = {
-		Damage = 10,
-		AttackSpeed = 1.0
-	}
+	"Breakable", 
+	"Enchantable", 
+	"Weapon"
+}, {
+	DisplayName = "Sword"
 })
 
 EnchantmentSystem.RegisterItemType("Bow", {
-	DisplayName = "Bow",
-	Type = "Bow",
-	Damage = 5,
-	DrawTime = 1.5,
-	Range = 50,
-	Durability = 100,
-	Enchantable = true,
-	BaseStats = {
-		Damage = 5,
-		DrawTime = 1.5,
-		Range = 50
-	}
+	"Breakable", 
+	"Enchantable", 
+	"Weapon", 
+	"Ranged"
+}, {
+	DisplayName = "Bow"
 })
 
 EnchantmentSystem.RegisterItemType("Wand", {
-	DisplayName = "Wand",
-	Type = "Wand",
-	MagicDamage = 8,
-	ManaCost = 10,
-	CooldownTime = 1.0,
-	Enchantable = true,
-	BaseStats = {
-		MagicDamage = 8,
-		ManaCost = 10,
-		CooldownTime = 1.0
-	}
+	"Breakable", 
+	"Enchantable", 
+	"Magical"
+}, {
+	DisplayName = "Wand"
 })
 
 EnchantmentSystem.RegisterItemType("Armor", {
-	DisplayName = "Armor",
-	Type = "Armor",
-	Defense = 5,
-	Weight = 10,
-	Durability = 100,
-	Enchantable = true,
-	BaseStats = {
-		Defense = 5,
-		Weight = 10
-	}
+	"Breakable", 
+	"Enchantable", 
+	"Defensive"
+}, {
+	DisplayName = "Armor"
 })
 
 -- Register default enchantments
 EnchantmentSystem.RegisterEnchantment("Sharpness", {
 	MaxLevel = 5,
 	ValidTypes = {"Sword"},
+	RequiredComponents = {"Weapon"},
 	Effects = {
-		Damage = {
-			Modifier = {
-				2, 4, 6, 8, 10
+		Weapon = {
+			Damage = {
+				Modifier = {2, 4, 6, 8, 10}
 			}
 		}
 	}
@@ -262,10 +360,11 @@ EnchantmentSystem.RegisterEnchantment("Sharpness", {
 EnchantmentSystem.RegisterEnchantment("Power", {
 	MaxLevel = 5,
 	ValidTypes = {"Bow"},
+	RequiredComponents = {"Weapon", "Ranged"},
 	Effects = {
-		Damage = {
-			Multiplier = {
-				1.2, 1.4, 1.6, 1.8, 2.0
+		Weapon = {
+			Damage = {
+				Multiplier = {1.2, 1.4, 1.6, 1.8, 2.0}
 			}
 		}
 	}
@@ -274,11 +373,10 @@ EnchantmentSystem.RegisterEnchantment("Power", {
 EnchantmentSystem.RegisterEnchantment("Infinity", {
 	MaxLevel = 1,
 	ValidTypes = {"Bow"},
+	RequiredComponents = {"Ranged"},
 	Effects = {
 		Custom = {
-			InfiniteAmmo = {
-				true
-			}
+			InfiniteAmmo = {true}
 		}
 	}
 })
@@ -286,10 +384,11 @@ EnchantmentSystem.RegisterEnchantment("Infinity", {
 EnchantmentSystem.RegisterEnchantment("Protection", {
 	MaxLevel = 4,
 	ValidTypes = {"Armor"},
+	RequiredComponents = {"Defensive"},
 	Effects = {
-		Defense = {
-			Multiplier = {
-				1.1, 1.2, 1.3, 1.4
+		Defensive = {
+			Defense = {
+				Multiplier = {1.1, 1.2, 1.3, 1.4}
 			}
 		}
 	}
@@ -298,10 +397,11 @@ EnchantmentSystem.RegisterEnchantment("Protection", {
 EnchantmentSystem.RegisterEnchantment("ManaEfficiency", {
 	MaxLevel = 3,
 	ValidTypes = {"Wand"},
+	RequiredComponents = {"Magical"},
 	Effects = {
-		ManaCost = {
-			Modifier = {
-				-2, -4, -6
+		Magical = {
+			ManaCost = {
+				Modifier = {-2, -4, -6}
 			}
 		}
 	}
@@ -310,16 +410,15 @@ EnchantmentSystem.RegisterEnchantment("ManaEfficiency", {
 EnchantmentSystem.RegisterEnchantment("ElementalFocus", {
 	MaxLevel = 5,
 	ValidTypes = {"Wand"},
+	RequiredComponents = {"Magical"},
 	Effects = {
-		MagicDamage = {
-			Multiplier = {
-				1.1, 1.2, 1.3, 1.4, 1.5
+		Magical = {
+			MagicDamage = {
+				Multiplier = {1.1, 1.2, 1.3, 1.4, 1.5}
 			}
 		},
 		Custom = {
-			ElementalDamage = {
-				2, 4, 6, 8, 10
-			}
+			ElementalDamage = {2, 4, 6, 8, 10}
 		}
 	}
 })
@@ -327,10 +426,14 @@ EnchantmentSystem.RegisterEnchantment("ElementalFocus", {
 EnchantmentSystem.RegisterEnchantment("Unbreaking", {
 	MaxLevel = 3,
 	ValidTypes = {"Sword", "Bow", "Armor", "Wand"},
+	RequiredComponents = {"Breakable"},
 	Effects = {
-		Durability = {
-			Multiplier = {
-				1.5, 2.0, 3.0
+		Breakable = {
+			Durability = {
+				Multiplier = {1.5, 2.0, 3.0}
+			},
+			MaxDurability = {
+				Multiplier = {1.5, 2.0, 3.0}
 			}
 		}
 	}
