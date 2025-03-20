@@ -2,7 +2,7 @@ local EnchantmentSystem = require(script.Parent.EnchantmentSystem)
 
 local InventoryManager = {}
 
--- Store rarity definitions
+-- Items come in different rarities, from basic to legendary
 InventoryManager.Rarities = {
 	"Common",
 	"Uncommon",
@@ -11,14 +11,14 @@ InventoryManager.Rarities = {
 	"Legendary"
 }
 
--- Define inventory object structure
+-- The basic structure for player inventories
 InventoryManager.DefaultInventory = {
 	Items = {},
 	MaxItems = 20,
 	Owner = ""
 }
 
--- Function to create a new inventory
+-- Creates a fresh inventory for a player
 function InventoryManager.CreateInventory(maxItems: number, owner: string?)
 	local inventory = table.clone(InventoryManager.DefaultInventory)
 	inventory.Items = {}
@@ -28,7 +28,7 @@ function InventoryManager.CreateInventory(maxItems: number, owner: string?)
 	return inventory
 end
 
--- Helper function to clone an item with all components
+-- Makes a deep copy of an item to avoid reference problems
 function InventoryManager.CloneItem(item)
 	if type(item) ~= "table" then
 		return item
@@ -46,21 +46,21 @@ function InventoryManager.CloneItem(item)
 	return clone
 end
 
--- Function to add an item to inventory
+-- Adds an item to a player's inventory
 function InventoryManager.AddItem(inventory, item)
 	if #inventory.Items >= inventory.MaxItems then
 		return false, "Inventory is full"
 	end
 
-	-- Clone the item to avoid reference issues
+	-- Make a copy so we don't mess with the original
 	local itemClone = InventoryManager.CloneItem(item)
 
-	-- Add to inventory
+	-- Put it in the bag
 	table.insert(inventory.Items, itemClone)
 	return true
 end
 
--- Function to remove an item from inventory
+-- Takes an item out of the inventory
 function InventoryManager.RemoveItem(inventory, index)
 	if index < 1 or index > #inventory.Items then
 		return false, "Invalid inventory index"
@@ -70,7 +70,7 @@ function InventoryManager.RemoveItem(inventory, index)
 	return true
 end
 
--- Function to find items in inventory based on criteria
+-- Searches through inventory for items matching specific criteria
 function InventoryManager.FindItems(inventory, criteria)
 	local results = {}
 
@@ -78,7 +78,7 @@ function InventoryManager.FindItems(inventory, criteria)
 		local matches = true
 
 		for key, value in pairs(criteria) do
-			-- Handle nested component properties
+			-- Handle nested properties like weapon.Damage
 			if type(value) == "table" then
 				for componentName, componentProps in pairs(value) do
 					if type(componentProps) == "table" and item[componentName] then
@@ -96,7 +96,7 @@ function InventoryManager.FindItems(inventory, criteria)
 						break
 					end
 				end
-				-- Handle direct properties
+				-- Handle top-level properties like DisplayName
 			elseif item[key] ~= value then
 				matches = false
 				break
@@ -111,14 +111,14 @@ function InventoryManager.FindItems(inventory, criteria)
 	return results
 end
 
--- Function to sort inventory items by criteria
+-- Organizes inventory items however you want
 function InventoryManager.SortItems(inventory, sortBy, ascending)
-	ascending = ascending ~= false -- Default to ascending if not specified
+	ascending = ascending ~= false -- Default to ascending unless specified
 
 	table.sort(inventory.Items, function(a, b)
 		local valueA, valueB
 
-		-- Handle component property sorting
+		-- If we're sorting by a component property like weapon.Damage
 		if type(sortBy) == "table" and #sortBy == 2 then
 			local componentName, propertyName = sortBy[1], sortBy[2]
 
@@ -128,13 +128,13 @@ function InventoryManager.SortItems(inventory, sortBy, ascending)
 			else
 				return false
 			end
-			-- Handle direct property sorting
+			-- If we're sorting by a direct property like DisplayName
 		else
 			valueA = a[sortBy]
 			valueB = b[sortBy]
 		end
 
-		-- Handle nil values
+		-- Handle cases where properties might be missing
 		if valueA == nil and valueB == nil then
 			return false
 		elseif valueA == nil then
@@ -143,7 +143,7 @@ function InventoryManager.SortItems(inventory, sortBy, ascending)
 			return ascending
 		end
 
-		-- Compare based on sort direction
+		-- Put items in the right order
 		if ascending then
 			return valueA < valueB
 		else
@@ -154,7 +154,7 @@ function InventoryManager.SortItems(inventory, sortBy, ascending)
 	return true
 end
 
--- Function to transfer items between inventories
+-- Moves items between inventories (trading, storage, etc.)
 function InventoryManager.TransferItem(fromInventory, toInventory, itemIndex)
 	if itemIndex < 1 or itemIndex > #fromInventory.Items then
 		return false, "Invalid source inventory index"
@@ -175,48 +175,72 @@ function InventoryManager.TransferItem(fromInventory, toInventory, itemIndex)
 	end
 end
 
--- Generate a table of default items with rarities
+-- Pre-designed items that can be spawned into the game
 InventoryManager.DefaultItems = {}
 
--- Function to register a default item template
+-- Adds a new template item to our catalog
 function InventoryManager.RegisterDefaultItem(itemId, itemType, properties, rarity)
-	-- Create the item using EnchantmentSystem
+	-- Create the item using the enchantment system
 	local item = EnchantmentSystem.CreateItem(itemType, properties)
 
-	-- Add metadata
+	-- Tag it with metadata
 	item.Id = itemId
 	item.Rarity = rarity or "Common"
 
-	-- Store in default items
+	-- Add it to our available templates
 	InventoryManager.DefaultItems[itemId] = item
 
 	return item
 end
 
--- Example default items
-InventoryManager.RegisterDefaultItem("basic_sword", "Sword", {
-	DisplayName = "Basic Sword"
-}, "Common")
 
-InventoryManager.RegisterDefaultItem("hunters_bow", "Bow", {
-	DisplayName = "Hunter's Bow",
-	Components = {
-		Ranged = {
-			Range = 60
-		}
-	}
-}, "Uncommon")
+-- Get an item by its ID
+function InventoryManager.GetItemById(inventory, itemId)
+	for i, item in ipairs(inventory.Items) do
+		if item.Id == itemId then
+			return item, i
+		end
+	end
+	return nil, nil
+end
 
-InventoryManager.RegisterDefaultItem("enchanted_armor", "Armor", {
-	DisplayName = "Enchanted Armor",
-	Components = {
-		Defensive = {
-			Defense = 8
-		},
-		Enchantable = {
-			MaxEnchantments = 5
-		}
+-- Add gold to inventory
+function InventoryManager.AddGold(inventory, amount)
+	inventory.Gold = inventory.Gold + amount
+	return inventory.Gold
+end
+
+-- Remove gold from inventory
+function InventoryManager.RemoveGold(inventory, amount)
+	if inventory.Gold < amount then
+		return false, "Not enough gold"
+	end
+
+	inventory.Gold = inventory.Gold - amount
+	return true, inventory.Gold
+end
+
+-- Calculate item value based on rarity and enchantments
+function InventoryManager.CalculateItemValue(item)
+	local rarityValues = {
+		Common = 10,
+		Uncommon = 25,
+		Rare = 75,
+		Epic = 200,
+		Legendary = 500
 	}
-}, "Rare")
+
+	local baseValue = rarityValues[item.Rarity] or 10
+
+	-- Add value for enchantments
+	local enchantmentValue = 0
+	if item.enchantable and item.enchantable.Enchantments then
+		for enchantName, level in pairs(item.enchantable.Enchantments) do
+			enchantmentValue = enchantmentValue + (level * 20)
+		end
+	end
+
+	return baseValue + enchantmentValue
+end
 
 return InventoryManager
